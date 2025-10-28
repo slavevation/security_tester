@@ -4,6 +4,7 @@ from enum import Enum
 from typing import List, Optional
 import sqlite3 
 import time
+from contextlib import asynccontextmanager
 
 app = FastAPI()
 DB_NAME = "vulnerable.db"
@@ -27,6 +28,18 @@ def init_db():
         print(f"База даних '{DB_NAME}' успішно ініціалізована.")
     except Exception as e:
         print(f"Помилка ініціалізації БД: {e}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Код, який виконається 1 раз ПЕРЕД запуском
+    print("🚀 Додаток запускається... Запускаю init_db().")
+    init_db()
+    yield
+    # Код, який виконається 1 раз ПІСЛЯ зупинки (якщо потрібно)
+    print("Application is shutting down...")
+
+# --- 3. Передаємо lifespan у наш app ---
+app = FastAPI(lifespan=lifespan)
 
 class TaskStatus(str, Enum):
     TODO = "to-do"

@@ -3,16 +3,14 @@ from tester.generator import AttackGenerator
 from tester.executor import APIExecutor
 from tester.analyzer import APIAnalyzer
 import json
-import os                 # <-- 1. Імпортуємо 'os' для роботи з файлами/папками
-from datetime import datetime # <-- 2. Імпортуємо 'datetime' для унікальних імен
+import os                 
+from datetime import datetime 
 
-# --- Константи ---
 OPENAPI_FILE_PATH = "openapi.json"
-BASE_URL = "http://127.0.0.1:8000" # URL нашого API
-RESULTS_DIR = "results"          # <-- 3. Назва нашої нової папки
+BASE_URL = "http://127.0.0.1:8000" 
+RESULTS_DIR = "results"          
 
 def main():
-    # --- 4. Налаштування файлу звіту ---
     os.makedirs(RESULTS_DIR, exist_ok=True) # Створюємо папку, якщо її немає
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     report_filename = f"test_report_{timestamp}.txt"
@@ -25,7 +23,6 @@ def main():
         print(message)
         report_lines.append(message)
 
-    # --- Початок виконання ---
     log("--- [Запуск Тестувальника Безпеки API] ---")
     log(f"Час запуску: {timestamp}")
     
