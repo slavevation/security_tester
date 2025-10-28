@@ -26,6 +26,7 @@
     "/items/": {
       "get": {
         "summary": "Get Items",
+        "description": "Повертає всі елементи з БД.",
         "operationId": "get_items_items__get",
         "responses": {
           "200": {
@@ -80,6 +81,7 @@
     "/items/{item_id}": {
       "get": {
         "summary": "Get Item By Id",
+        "description": "Шукає і повертає ОДНЕ завдання за його ID.\nДуже вразливий до SQL Injection.",
         "operationId": "get_item_by_id_items__item_id__get",
         "parameters": [
           {
@@ -87,7 +89,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
+              "type": "string",
               "title": "Item Id"
             }
           }

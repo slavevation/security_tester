@@ -1,114 +1,126 @@
-from tester.generator import AttackGenerator
 from tester.parser import APIParser
+from tester.generator import AttackGenerator
 from tester.executor import APIExecutor
-import json 
+from tester.analyzer import APIAnalyzer
+import json
+import os                 # <-- 1. Імпортуємо 'os' для роботи з файлами/папками
+from datetime import datetime # <-- 2. Імпортуємо 'datetime' для унікальних імен
 
+# --- Константи ---
 OPENAPI_FILE_PATH = "openapi.json"
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "http://127.0.0.1:8000" # URL нашого API
+RESULTS_DIR = "results"          # <-- 3. Назва нашої нової папки
 
 def main():
-    print("--- [Запуск Тестувальника Безпеки API] ---")
+    # --- 4. Налаштування файлу звіту ---
+    os.makedirs(RESULTS_DIR, exist_ok=True) # Створюємо папку, якщо її немає
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    report_filename = f"test_report_{timestamp}.txt"
+    report_filepath = os.path.join(RESULTS_DIR, report_filename)
     
-    print(f"\n[Крок 1] Аналіз файлу {OPENAPI_FILE_PATH}...")
+    report_lines = [] # Тут будемо збирати весь наш вивід
     
+    # Створимо маленьку функцію, щоб одночасно друкувати і зберігати
+    def log(message):
+        print(message)
+        report_lines.append(message)
+
+    # --- Початок виконання ---
+    log("--- [Запуск Тестувальника Безпеки API] ---")
+    log(f"Час запуску: {timestamp}")
+    
+    # --- КРОК 1: ПАРСИНГ ---
+    log(f"\n[Крок 1] Аналіз файлу {OPENAPI_FILE_PATH}...")
     parser = APIParser(filepath=OPENAPI_FILE_PATH)
     all_endpoints = parser.parse_endpoints()
-    
-    print(f"✅ Успішно проаналізовано! Знайдено {len(all_endpoints)} ендпоінтів.")
-    print("-" * 30)
-    
-    for ep in all_endpoints:
-        print(f"  [{ep['method']}] {ep['path']}")
-        print(f"    Summary: {ep['summary']}")
-        
-        if ep['parameters']:
-            param_names = [param['name'] for param in ep['parameters']]
-            print(f"    URL Parameters : {param_names}")
+    log(f"✅ Успішно проаналізовано! Знайдено {len(all_endpoints)} ендпоінтів.")
 
-        if ep['requestBodySchema']:
-            print(f"    Body Schema    :")
-            
-            schema_pretty = json.dumps(ep['requestBodySchema'], indent=8)
-            print(f"{schema_pretty}")
-                
-        print("-" * 20) 
-
-    print("\n[Крок 2] Генерація тест-кейсів (LLM)...")
-
+    # --- КРОК 2: ГЕНЕРАЦІЯ АТАК (LLM) ---
+    log("\n[Крок 2] Генерація тест-кейсів (LLM)...")
     generator = AttackGenerator()
-    all_test_plans = []
-
+    all_test_plans = [] 
+    
     for ep in all_endpoints:
-        print(f"  > Генерую тести для [{ep['method']}] {ep['path']}...")
-        
-        # 3. Для кожного ендпоінта просимо згенерувати тести
+        log(f"  > Генерую тести для [{ep['method']}] {ep['path']}...")
         test_cases = generator.generate_test_cases_for_endpoint(ep)
-        
         if test_cases:
-            print(f"    ... ✅ згенеровано {len(test_cases)} тест-кейсів.")
-            # 4. Зберігаємо план атаки
-            all_test_plans.append({
-                "endpoint": ep,
-                "tests": test_cases
-            })
-        else:
-            print("    ... ⚪️ тест-кейси не потрібні.")
+            all_test_plans.append({"endpoint": ep, "tests": test_cases})
+    log(f"✅ Згенеровано плани атак для {len(all_test_plans)} ендпоінтів.")
 
-    # --- Виведемо згенеровані тести для перевірки ---
-    print("\n--- [Згенеровані Плани Атак] ---")
-    for plan in all_test_plans:
-        ep = plan['endpoint']
-        print(f"\n📍 Ендпоінт: [{ep['method']}] {ep['path']}")
-        for test in plan['tests']:
-            print(f"  - Атака: {test['description']}")
-            print(f"  - Payload: {json.dumps(test['payload'])}")
-    
-    print("\n[Крок 3] Виконання атак...")
-    
+
+    # --- КРОК 3: ВИКОНАННЯ АТАК ---
+    log("\n[Крок 3] Виконання атак...")
     executor = APIExecutor(base_url=BASE_URL)
     all_results = [] 
-
+    
     for plan in all_test_plans:
         ep = plan['endpoint']
-        method = ep['method']
-        path = ep['path']
-        
-        print(f"\n  > Тестую [{method}] {path}...")
+        log(f"\n  > Тестую [{ep['method']}] {ep['path']}...")
         
         for test in plan['tests']:
-            payload = test['payload']
             json_payload = None
             url_param_payload = None
             param_name = None
-
             if ep['requestBodySchema']:
-                # Payload йде в тіло JSON
-                json_payload = payload
+                json_payload = test['payload']
             elif ep['parameters']:
-                # Payload йде в URL
-                url_param_payload = str(payload)
-                # (Припускаємо, що параметр один, що вірно для нашого API)
+                url_param_payload = str(test['payload'])
                 param_name = ep['parameters'][0]['name'] 
             
-            # 4. ВИКОНУЄМО ТЕСТ!
             result = executor.execute_test(
-                method=method,
-                path=path,
+                method=ep['method'],
+                path=ep['path'],
                 json_payload=json_payload,
                 url_param_payload=url_param_payload,
                 param_name=param_name
             )
             
-            # 5. Друкуємо короткий звіт
-            print(f"    - Атака: {test['description']}")
-            print(f"    - > РЕЗУЛЬТАТ: Статус {result['status_code']} за {result['time_seconds']:.2f} сек.")
+            log(f"    - Атака: {test['description'][:70]}...")
+            log(f"    - > РЕЗУЛЬТАТ: Статус {result['status_code']} за {result['time_seconds']:.2f} сек.")
+            if result['error']:
+                log(f"    - > ❗️ ПОМИЛКА: {result['body']}") 
             
-            # Зберігаємо все для аналізу
-            all_results.append({
-                "endpoint": ep,
-                "test": test,
-                "result": result
-            })
+            all_results.append({ "endpoint": ep, "test": test, "result": result })
+
+    # --- КРОК 4: АНАЛІЗ РЕЗУЛЬТАТІВ ---
+    log("\n" + "="*50)
+    log("--- 🏁 ФІНАЛЬНИЙ ЗВІТ ПРО ВРАЗЛИВОСТІ ---")
+    log("="*50)
+    
+    analyzer = APIAnalyzer()
+    vulnerabilities = analyzer.analyze_results(all_results)
+    
+    if not vulnerabilities:
+        log("\n✅ Вітаємо! Жодних критичних вразливостей не знайдено.")
+        log("   Ваша валідація типів (статуси 422) та бізнес-логіка (статуси 201)")
+        log("   коректно обробили всі атаки.")
+        log("\n   Пояснення:")
+        log("   - Статус 422 (Unprocessable Entity): Ваш API захищений валідацією. Він відхилив")
+        log("     шкідливий ввід (напр., рядок замість числа) *до* того, як він потрапив до логіки.")
+        log("   - Статус 201 (Created) за 0.0 сек: Ваш API зберіг шкідливий рядок (напр., SQLi)")
+        log("     як звичайний текст, але *не виконав* його. Це також безпечна поведінка.")
+    else:
+        log(f"\n🚨 УВАГА! Знайдено {len(vulnerabilities)} вразливостей:")
+        for i, vuln in enumerate(vulnerabilities):
+            log(f"\n--- Вразливість #{i+1} ---")
+            log(f"  Тип      : {vuln['vulnerability']['type']}")
+            log(f"  Ендпоінт : {vuln['endpoint']}")
+            log(f"  Деталі   : {vuln['vulnerability']['details']}")
+            log(f"  Payload  : {json.dumps(vuln['payload'])}")
+    
+    log("\n--- [Тестування завершено] ---")
+
+    # --- 5. Зберігаємо звіт у файл ---
+    try:
+        with open(report_filepath, 'w', encoding='utf-8') as f:
+            f.write("\n".join(report_lines))
+        print("\n" + "="*50)
+        print(f"✅ Звіт успішно збережено у файл:")
+        print(f"   {report_filepath}")
+        print("="*50)
+    except Exception as e:
+        print(f"\n❗️ Помилка під час збереження звіту у файл: {e}")
+
 
 if __name__ == "__main__":
     main()

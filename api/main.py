@@ -2,8 +2,31 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from enum import Enum
 from typing import List, Optional
+import sqlite3 
+import time
 
 app = FastAPI()
+DB_NAME = "vulnerable.db"
+
+def init_db():
+    """Створює нашу базу даних та таблицю, якщо їх немає."""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        # Створюємо таблицю
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT
+        )
+        """)
+        conn.commit()
+        conn.close()
+        print(f"База даних '{DB_NAME}' успішно ініціалізована.")
+    except Exception as e:
+        print(f"Помилка ініціалізації БД: {e}")
 
 class TaskStatus(str, Enum):
     TODO = "to-do"
@@ -28,27 +51,74 @@ async def read_root():
 
 @app.post("/items/", status_code=201)
 async def create_item(item: Item):
-    global current_id
-    current_id += 1
-
-    new_item = Item(id=current_id, 
-                    title=item.title, 
-                    description=item.description,
-                    status=item.status)
-
-    db.append(new_item)
-    return new_item
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Використання executescript саме по собі є ризиком
+        # Хоча Pydantic нас тут рятує від SQLi в `item.title`
+        sql_script = f"""
+        INSERT INTO items (title, description, status) 
+        VALUES ('{item.title}', '{item.description}', '{item.status.value}');
+        """
+        cursor.executescript(sql_script) # .executescript() може виконати SLEEP!
+        
+        new_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        # Повертаємо створений об'єкт
+        new_item = item.model_copy(update={"id": new_id})
+        return new_item
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 @app.get("/items/")
 async def get_items():
-    return db
+    """Повертає всі елементи з БД."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row # Щоб отримувати dict-подібні рядки
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM items")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows] # Конвертуємо у список dict
 
 @app.get("/items/{item_id}")
-async def get_item_by_id(item_id: int):
-    for item in db:
-        if item.id == item_id:
-            return item
-    raise HTTPException(status_code=404, detail="Item not found")
+async def get_item_by_id(item_id: str): # <-- ❗️ ВРАЗЛИВІСТЬ №1: Приймаємо `str`
+    """
+    Шукає і повертає ОДНЕ завдання за його ID.
+    Дуже вразливий до SQL Injection.
+    """
+    
+    # ❗️ ВРАЗЛИВІСТЬ №2: Симуляція Time-based SQLi
+    # Якщо payload містить 'sleep', ми чекаємо 5 секунд
+    if "sleep" in item_id.lower():
+        print("!!! Атака 'SLEEP' виявлена! Симулюємо затримку 5 сек... !!!")
+        time.sleep(5)
+    
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # ❗️ ВРАЗЛИВІСТЬ №3: Небезпечний f-string
+        # Якщо item_id = "1 OR 1=1", запит стане "SELECT * ... WHERE id = 1 OR 1=1"
+        sql_query = f"SELECT * FROM items WHERE id = {item_id}" 
+        
+        print(f"  > Виконую небезпечний SQL: {sql_query}") # (для дебагу)
+        
+        cursor.execute(sql_query)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return dict(row)
+        raise HTTPException(status_code=404, detail="Item not found")
+    except Exception as e:
+        # Атака 'Error-based' (напр., `1'`) викличе помилку тут
+        print(f"!!! SQL Помилка: {e} !!!")
+        raise HTTPException(status_code=500, detail=f"SQL Error: {e}")
 
 @app.get("/statuses")
 async def get_statuses():
